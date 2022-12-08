@@ -46,8 +46,10 @@ int main(int argc, char ** argv)
     size_t sum = 0;
     float sum2 = 0;
 
-    size_t iter_power = atoi(argv[1]);
-    size_t power = atoi(argv[2]);
+    //size_t iter_power = atoi(argv[1]);
+    //size_t power = atoi(argv[2]);
+    size_t iter_power = 3;
+    size_t power = 16;
 
     zsim_roi_begin();
     zsim_PIM_function_begin();

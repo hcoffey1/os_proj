@@ -1,0 +1,3 @@
+[submodule "proc_scheduler"]
+	path = proc_scheduler
+	url = https://github.com/dlekkas/proc_scheduler.git
