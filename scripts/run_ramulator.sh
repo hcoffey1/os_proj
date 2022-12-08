@@ -1,7 +1,7 @@
 #!/bin/sh
 
-config=""
-trace=""
+config="/ramulator-pim/ramulator/Configs/pim.cfg"
+trace="/ramulator-pim/os_proj/pim-mem.out"
 
 /ramulator-pim/ramulator/ramulator --config $config \
     --disable-perf-scheduling true --mode=cpu --stats host.stats \

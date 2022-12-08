@@ -1,5 +1,6 @@
 #include <cstdlib>
 #include <iostream>
+#include "zsim-ramulator/misc/hooks/zsim_hooks.h"
 
 #if defined(GEM5_BUILD) || defined(GEM5_ZRAY_BUILD)
 #include "gem5/m5ops.h"
@@ -48,10 +49,17 @@ int main(int argc, char ** argv)
     size_t iter_power = atoi(argv[1]);
     size_t power = atoi(argv[2]);
 
+    zsim_roi_begin();
+    zsim_PIM_function_begin();
+	
+    printf(">>>>>>>>>>>>>Starting\n");
+
     // size_t iter_count = rand()%100;
     size_t iter_count = 1l << iter_power; 
     for (int z = 0; z < iter_count; z++)
     {
+    	printf("Iteration : %d\n", z);
+
         //size_t power = 16;
         int *array_heap = (int *)malloc(4 * (1 << power));
         float array_stack[256];
@@ -119,6 +127,9 @@ int main(int argc, char ** argv)
         free(array_heap);
 
     }
+
+    zsim_PIM_function_end();
+    zsim_roi_end();
 
     printf("Sum is %d\n", sum);
     printf("Sum2 is %f\n", sum2);

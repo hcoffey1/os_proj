@@ -1,1 +1,10 @@
 mem
+*.0
+*.1
+*.2
+*.3
+*.h5
+*.out
+*.stats
+out.cfg
+heartbeat
