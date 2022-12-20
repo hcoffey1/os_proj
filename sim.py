@@ -1,7 +1,5 @@
 SIM_CYCLES = 1e6
 
-
-
 MRAM_SIZE = 2**26
 
 WRAM_SIZE = 2**16
@@ -63,6 +61,8 @@ class Task:
 		self.WorkLoadSize = WorkLoadSize
 		self.CyclesPerByte = BytesPerCycle
 
+def getTaskLabel(task : Task) -> str:
+	return str(task.ParentJob.ID) + "-" + str(task.TaskID)
 class SimState:
 #	InternalDMAActive = False
 
@@ -73,6 +73,85 @@ class SimState:
 	MemoryBusTask : Task = None
 
 	TaskSize = 0
+	TotalCycles = 0
+
+	JobList : list[Job] = None
+	TaskArray : list[Task] = None
+
+	OutQueue : list = None
+
+
+	def pruneJobs(self) -> None:
+		modified = True 
+
+		while modified:
+			modified = False
+			for job in self.JobList:
+				if job.WorkLoadCompleted >= job.WorkLoadSize:
+					print("---Job : ", job.ID, " finished at cycle : ", self.TotalCycles)
+					self.JobList.remove(job)
+					modified = True
+
+	def SimMemoryBus():
+		pass
+
+	def SimMemoryBusTransfer(self):
+		#if memory bus is active, continue whatever transfer is happening
+		if self.MemoryBusActive:
+			self.MemoryBusTask.TransferCyclesRemaining -= SIM_CYCLES
+
+			if self.MemoryBusTask.TransferCyclesRemaining <= 0:
+				print("Done transfering...")
+
+				if self.MemoryBusTask.IsToHost:
+					self.MemoryBusTask.ParentJob.WorkLoadCompleted += self.TaskSize
+					print("Task ", self.MemoryBusTask.ParentJob.ID, " - ", self.MemoryBusTask.TaskID,  " has finished : ", \
+						 self.MemoryBusTask.ParentJob.WorkLoadCompleted, '/', self.MemoryBusTask.ParentJob.WorkLoadSize)
+					self.MemoryBusTask.Valid=False
+
+					self.pruneJobs()
+
+				self.MemoryBusTask.Transfering = False
+				self.MemoryBusTask = None
+				self.MemoryBusActive = False
+	
+	def FindBusInputJob(self):
+		#if need to read from host
+		if not self.MemoryBusActive:
+
+			#Is there a spot available on the DPU?
+			FreeTask = getFreeTask(self.TaskArray)
+
+			#Is there a Job waiting in queue?
+			NextJob = selectJob(self.JobList)
+
+			if FreeTask != None and NextJob != None:
+				
+				#Associate Task with Job, and mark as transfering to DPU
+				FreeTask.ParentJob = NextJob
+				FreeTask.CyclesPerByte = NextJob.CyclesPerByte
+				FreeTask.TransferCyclesRemaining = hostToDPUTransfer(self.TaskSize)
+				FreeTask.InternalCyclesRemaining = getInternalCycles(self.TaskSize, FreeTask.CyclesPerByte)
+				FreeTask.Transfering = True
+				FreeTask.Valid = True
+
+				print("Starting transfer of job", getTaskLabel(FreeTask))
+
+				#Record that job has dispatched a task
+				NextJob.WorkLoadDispatched += self.TaskSize
+
+				#Let global state know memory bus is active
+				self.MemoryBusActive = True
+				self.MemoryBusTask = FreeTask
+
+	def FindBusOutputJob(self):
+		#if outbound task waiting, start its transfer
+		if not self.MemoryBusActive and self.OutQueue:
+			print("Starting transfer back to host")
+			self.MemoryBusTask = self.OutQueue.pop(0)
+
+			self.MemoryBusTask.Transfering = True
+			self.MemoryBusActive = True
 
 sim = SimState()
 
@@ -119,151 +198,42 @@ def selectTask(TaskList : list[Task]) -> Task:
 
 	return None
 
-def pruneJobs(JobList : list[Job]) -> None:
-	modified = True 
-
-	while modified:
-		modified = False
-		for job in JobList:
-			if job.WorkLoadCompleted >= job.WorkLoadSize:
-				JobList.remove(job)
-				modified = True
 
 
 def main():
-
-	##print((2**23)/WRAM_SIZE)
-	##print(read_mramLatency(WRAM_SIZE))
-	##print(write_mramLatency(WRAM_SIZE))
-
-	#x=0
-	#WorkLoadSize = 2**26
-	#PartitionSize = 2**23
-	#CyclesPerByte = 30.0/8
-	#for i in range(int((WorkLoadSize) / (PartitionSize))):
-	#	print(getExternalCycles(PartitionSize)/(1e6))
-	#	print(getInternalCycles(PartitionSize, CyclesPerByte)/(1e6))
-	#	x += max(getExternalCycles(PartitionSize), getInternalCycles(PartitionSize, CyclesPerByte))
-	#	print(i)
-
-	#print("8MB", x/(1e6))
-
-	#x=0
-	#WorkLoadSize = 2**26
-	#PartitionSize = 2**24
-	#CyclesPerByte = 30.0/8
-	#for i in range(int((WorkLoadSize) / (PartitionSize))):
-	#	print(getExternalCycles(PartitionSize)/(1e6))
-	#	print(getInternalCycles(PartitionSize, CyclesPerByte)/(1e6))
-	#	print(i)
-	#	x += max(getExternalCycles(PartitionSize), getInternalCycles(PartitionSize, CyclesPerByte))
-
-	#print("16MB", x/(1e6))
-
-	#x=0
-	#WorkLoadSize = 2**26
-	#PartitionSize = 2**25
-	#CyclesPerByte = 30.0/8
-	#for i in range(int((WorkLoadSize) / (PartitionSize))):
-	#	print(getExternalCycles(PartitionSize)/(1e6))
-	#	print(getInternalCycles(PartitionSize, CyclesPerByte)/(1e6))
-	#	print(i)
-	#	x += max(getExternalCycles(PartitionSize), getInternalCycles(PartitionSize, CyclesPerByte))
-
-	#print("32MB", x/(1e6))
-
-	#x=0
-	#WorkLoadSize = 2**26
-	#PartitionSize = 2**26
-	#CyclesPerByte = 30.0/8
-	#for i in range(int((WorkLoadSize) / (PartitionSize))):
-	#	print(getExternalCycles(PartitionSize)/(1e6))
-	#	print(getInternalCycles(PartitionSize, CyclesPerByte)/(1e6))
-	#	print(i)
-	#	x += max(getExternalCycles(PartitionSize), getInternalCycles(PartitionSize, CyclesPerByte))
-
-
-	#print("64MB", x/(1e6))
-
 	global sim
 
-	sim.TaskSize = 2**23
+	sim.TaskSize = 2**21
 
-	TotalCycles = 0
-	JobList = [Job(2**26, 0, 3.0/8)]
-	OutQueue = []
+	sim.JobList = [Job(2**26, 0, 30.0/8), Job(2**26, 0, 20/8)]
+	sim.OutQueue = []
 	InQueue = []
 
-	TaskArray = []
+	sim.TaskArray = []
 	for i in range(int(MRAM_SIZE/sim.TaskSize)):
-		TaskArray.append(Task(i, 0, 0, 0))
+		sim.TaskArray.append(Task(i, 0, 0, 0))
 
 	#Simulation loop
-	while JobList: 
-		TotalCycles += SIM_CYCLES
-
+	while sim.JobList: 
+		sim.TotalCycles += SIM_CYCLES
 		#if outbound task waiting, start its transfer
-		if not sim.MemoryBusActive and OutQueue:
-			print("Starting transfer back to host")
-			sim.ActiveTask.Transfering = True
-
-			sim.MemoryBusTask = OutQueue.pop(0)
-			sim.MemoryBusActive = True
-
-		#if memory bus is active, continue whatever transfer is happening
-		if sim.MemoryBusActive:
-			sim.MemoryBusTask.TransferCyclesRemaining -= SIM_CYCLES
-
-			if sim.MemoryBusTask.TransferCyclesRemaining <= 0:
-				print("Done transfering to host...")
-
-				if sim.MemoryBusTask.IsToHost:
-					sim.MemoryBusTask.ParentJob.WorkLoadCompleted += sim.TaskSize
-					print("Job has finished : ", sim.MemoryBusTask.ParentJob.WorkLoadCompleted, '/', sim.MemoryBusTask.ParentJob.WorkLoadSize)
-					#break
-
-				sim.MemoryBusTask.Transfering = False
-				sim.MemoryBusTask = None
-				sim.MemoryBusActive = False
+		sim.FindBusOutputJob()
 
 		#if need to read from host
-		elif not sim.MemoryBusActive:
-
-			#Is there a spot available on the DPU?
-			FreeTask = getFreeTask(TaskArray)
-
-			#Is there a Job waiting in queue?
-			NextJob = selectJob(JobList)
-
-			if FreeTask != None and NextJob != None:
-				
-				print("Starting transfer of job ", NextJob.ID)
-				#Associate Task with Job, and mark as transfering to DPU
-				FreeTask.ParentJob = NextJob
-				FreeTask.CyclesPerByte = NextJob.CyclesPerByte
-				FreeTask.TransferCyclesRemaining = hostToDPUTransfer(sim.TaskSize) - SIM_CYCLES
-				FreeTask.InternalCyclesRemaining = getInternalCycles(sim.TaskSize, FreeTask.CyclesPerByte)
-				FreeTask.Transfering = True
-				FreeTask.Valid = True
-
-				#Record that job has dispatched a task
-				NextJob.WorkLoadDispatched += sim.TaskSize
-
-				#Let global state know memory bus is active
-				sim.MemoryBusActive = True
-				sim.MemoryBusTask = FreeTask
-
+		sim.FindBusInputJob()
+		
+		#if memory bus is active, continue whatever transfer is happening
+		sim.SimMemoryBusTransfer()
 
 		#if need to start a task 
 		if not sim.DPUActive:
 
 			#Is there a task that needs to be run?
-			NextTask : Task = selectTask(TaskArray)
+			NextTask : Task = selectTask(sim.TaskArray)
 
 			if NextTask != None:
 				print("Starting task ", NextTask.TaskID, ", job ID: ", NextTask.ParentJob.ID)
 				NextTask.Active = True
-				#NextTask.InternalCyclesRemaining = getInternalCycles(sim.TaskSize, NextTask.CyclesPerByte) - SIM_CYCLES
 
 				sim.ActiveTask = NextTask
 				sim.DPUActive = True
@@ -291,15 +261,14 @@ def main():
 				
 				#Bus is currently busy, put task in outbound queue
 				else:
-					OutQueue.append(sim.ActiveTask)
+					sim.OutQueue.append(sim.ActiveTask)
 
 
 				sim.DPUActive = False
 				sim.ActiveTask = None
 
-		pruneJobs(JobList)
 	
-	print(TotalCycles)
+	print(sim.TotalCycles)
 
 
 
