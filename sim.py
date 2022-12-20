@@ -1,9 +1,10 @@
 SIM_CYCLES = 1e6
 
+
+#Numbers from: https://arxiv.org/pdf/2105.03814.pdf#cite.gomezluna2021repo
 MRAM_SIZE = 2**26
 
 WRAM_SIZE = 2**16
-
 
 MRAM_READ_ALPHA = 77
 MRAM_WRITE_ALPHA = 61
@@ -14,8 +15,8 @@ DPU_TO_HOST_BW = 0.5 * (2**30)
 
 DPU_CLOCK_SPEED = 350e6
 
-
 JobIndex = 0
+
 
 class Job:
 	Priority = 0
@@ -24,8 +25,7 @@ class Job:
 	WorkLoadCompleted = 0
 
 	CyclesPerByte = 0
-	ID = 0  
-	
+	ID = 0
 
 	def __init__(self, WorkLoadSize, Priority, BytesPerCycle) -> None:
 		global JobIndex
@@ -36,12 +36,13 @@ class Job:
 
 		JobIndex += 1
 
+
 class Task:
 	Priority = 0
 	PartitionSize = 0
 	CyclesPerByte = 0
 
-	ParentJob : Job = None
+	ParentJob: Job = None
 
 	Valid = False
 
@@ -61,28 +62,31 @@ class Task:
 		self.WorkLoadSize = WorkLoadSize
 		self.CyclesPerByte = BytesPerCycle
 
-def getTaskLabel(task : Task) -> str:
+
+def getTaskLabel(task: Task) -> str:
 	return str(task.ParentJob.ID) + "-" + str(task.TaskID)
+
+
 class SimState:
-#	InternalDMAActive = False
+	#	InternalDMAActive = False
 
 	DPUActive = False
-	ActiveTask : Task = None
+	ActiveTask: Task = None
 
 	MemoryBusActive = False
-	MemoryBusTask : Task = None
+	MemoryBusTask: Task = None
 
 	TaskSize = 0
 	TotalCycles = 0
 
-	JobList : list[Job] = None
-	TaskArray : list[Task] = None
+	JobList: list[Job] = None
+	TaskArray: list[Task] = None
 
-	OutQueue : list = None
-
+	OutQueue: list = None
+	InQueue: list = None
 
 	def pruneJobs(self) -> None:
-		modified = True 
+		modified = True
 
 		while modified:
 			modified = False
@@ -92,8 +96,15 @@ class SimState:
 					self.JobList.remove(job)
 					modified = True
 
-	def SimMemoryBus():
-		pass
+	def SimMemoryBus(self):
+		#if outbound task waiting, start its transfer
+		self.FindBusOutputJob()
+
+		#if need to read from host
+		self.FindBusInputJob()
+
+		#if memory bus is active, continue whatever transfer is happening
+		self.SimMemoryBusTransfer()
 
 	def SimMemoryBusTransfer(self):
 		#if memory bus is active, continue whatever transfer is happening
@@ -105,16 +116,16 @@ class SimState:
 
 				if self.MemoryBusTask.IsToHost:
 					self.MemoryBusTask.ParentJob.WorkLoadCompleted += self.TaskSize
-					print("Task ", self.MemoryBusTask.ParentJob.ID, " - ", self.MemoryBusTask.TaskID,  " has finished : ", \
-						 self.MemoryBusTask.ParentJob.WorkLoadCompleted, '/', self.MemoryBusTask.ParentJob.WorkLoadSize)
-					self.MemoryBusTask.Valid=False
+					print("Task ", self.MemoryBusTask.ParentJob.ID, " - ", self.MemoryBusTask.TaskID,  " has finished : ",
+                                            self.MemoryBusTask.ParentJob.WorkLoadCompleted, '/', self.MemoryBusTask.ParentJob.WorkLoadSize)
+					self.MemoryBusTask.Valid = False
 
 					self.pruneJobs()
 
 				self.MemoryBusTask.Transfering = False
 				self.MemoryBusTask = None
 				self.MemoryBusActive = False
-	
+
 	def FindBusInputJob(self):
 		#if need to read from host
 		if not self.MemoryBusActive:
@@ -126,12 +137,13 @@ class SimState:
 			NextJob = selectJob(self.JobList)
 
 			if FreeTask != None and NextJob != None:
-				
+
 				#Associate Task with Job, and mark as transfering to DPU
 				FreeTask.ParentJob = NextJob
 				FreeTask.CyclesPerByte = NextJob.CyclesPerByte
 				FreeTask.TransferCyclesRemaining = hostToDPUTransfer(self.TaskSize)
-				FreeTask.InternalCyclesRemaining = getInternalCycles(self.TaskSize, FreeTask.CyclesPerByte)
+				FreeTask.InternalCyclesRemaining = getInternalCycles(
+					self.TaskSize, FreeTask.CyclesPerByte)
 				FreeTask.Transfering = True
 				FreeTask.Valid = True
 
@@ -153,7 +165,60 @@ class SimState:
 			self.MemoryBusTask.Transfering = True
 			self.MemoryBusActive = True
 
+	def SimDPU(self):
+		#if need to start a task
+		sim.FindDPUTask()
+
+		#Process currently running task
+		sim.RunDPUTask()
+
+	def FindDPUTask(self):
+		#if need to start a task
+		if not self.DPUActive:
+
+			#Is there a task that needs to be run?
+			NextTask: Task = selectTask(self.TaskArray)
+
+			if NextTask != None:
+				print("Starting task ", NextTask.TaskID,
+				      ", job ID: ", NextTask.ParentJob.ID)
+				NextTask.Active = True
+
+				self.ActiveTask = NextTask
+				self.DPUActive = True
+
+	def RunDPUTask(self):
+		#Process currently running task
+		if self.ActiveTask != None:
+			self.ActiveTask.InternalCyclesRemaining -= SIM_CYCLES
+
+			#If task has finished, begin transfering it back to Host
+			if self.ActiveTask.InternalCyclesRemaining <= 0:
+				print("Done")
+
+				self.ActiveTask.Active = False
+
+				self.ActiveTask.TransferCyclesRemaining = DPUToHostTransfer(self.TaskSize)
+				self.ActiveTask.IsToHost = True
+
+				#Start transfer
+				if not self.MemoryBusActive:
+					print("Starting transfer back to host")
+					self.ActiveTask.Transfering = True
+
+					self.MemoryBusTask = self.ActiveTask
+					self.MemoryBusActive = True
+
+				#Bus is currently busy, put task in outbound queue
+				else:
+					self.OutQueue.append(self.ActiveTask)
+
+				self.DPUActive = False
+				self.ActiveTask = None
+
+
 sim = SimState()
+
 
 def getFreeTask(TaskArray: list[Task]) -> Task:
 	for task in TaskArray:
@@ -162,14 +227,18 @@ def getFreeTask(TaskArray: list[Task]) -> Task:
 
 	return None
 
+
 def read_mramLatency(size):
 	return MRAM_READ_ALPHA + 0.5 * size
+
 
 def write_mramLatency(size):
 	return MRAM_WRITE_ALPHA + 0.5 * size
 
+
 def hostToDPUTransfer(size):
 	return (size * 1.0 / HOST_TO_DPU_BW) * DPU_CLOCK_SPEED
+
 
 def DPUToHostTransfer(size):
 	return (size * 1.0 / DPU_TO_HOST_BW) * DPU_CLOCK_SPEED
@@ -182,15 +251,17 @@ def getInternalCycles(PartitionSize, CyclesPerByte):
 def getExternalCycles(PartitionSize):
 	return hostToDPUTransfer(PartitionSize) + DPUToHostTransfer(PartitionSize)
 
-def selectJob(JobList : list[Job]) -> Job:
+
+def selectJob(JobList: list[Job]) -> Job:
 	global sim
 	for job in JobList:
 		if job.WorkLoadDispatched < job.WorkLoadSize:
 			return job
 
-	return None 
+	return None
 
-def selectTask(TaskList : list[Task]) -> Task:
+
+def selectTask(TaskList: list[Task]) -> Task:
 	global sim
 	for task in TaskList:
 		if task.Valid and not task.Active and not task.Transfering and task.InternalCyclesRemaining > 0:
@@ -199,78 +270,30 @@ def selectTask(TaskList : list[Task]) -> Task:
 	return None
 
 
-
 def main():
 	global sim
 
-	sim.TaskSize = 2**21
+	sim.TaskSize = 2**25
 
 	sim.JobList = [Job(2**26, 0, 30.0/8), Job(2**26, 0, 20/8)]
 	sim.OutQueue = []
-	InQueue = []
+	sim.InQueue = []
 
 	sim.TaskArray = []
 	for i in range(int(MRAM_SIZE/sim.TaskSize)):
 		sim.TaskArray.append(Task(i, 0, 0, 0))
 
 	#Simulation loop
-	while sim.JobList: 
+	while sim.JobList:
 		sim.TotalCycles += SIM_CYCLES
-		#if outbound task waiting, start its transfer
-		sim.FindBusOutputJob()
 
-		#if need to read from host
-		sim.FindBusInputJob()
-		
-		#if memory bus is active, continue whatever transfer is happening
-		sim.SimMemoryBusTransfer()
+		#Simulate memory bus transfers
+		sim.SimMemoryBus()
 
-		#if need to start a task 
-		if not sim.DPUActive:
+		#Simulate taks on DPU
+		sim.SimDPU()
 
-			#Is there a task that needs to be run?
-			NextTask : Task = selectTask(sim.TaskArray)
-
-			if NextTask != None:
-				print("Starting task ", NextTask.TaskID, ", job ID: ", NextTask.ParentJob.ID)
-				NextTask.Active = True
-
-				sim.ActiveTask = NextTask
-				sim.DPUActive = True
-
-		#Process currently running task
-		if sim.ActiveTask != None:
-			sim.ActiveTask.InternalCyclesRemaining -= SIM_CYCLES
-
-			#If task has finished, begin transfering it back to Host
-			if sim.ActiveTask.InternalCyclesRemaining <= 0:
-				print("Done")
-
-				sim.ActiveTask.Active = False
-
-				sim.ActiveTask.TransferCyclesRemaining = DPUToHostTransfer(sim.TaskSize)
-				sim.ActiveTask.IsToHost = True
-
-				#Start transfer
-				if not sim.MemoryBusActive:
-					print("Starting transfer back to host")
-					sim.ActiveTask.Transfering = True
-
-					sim.MemoryBusTask = sim.ActiveTask
-					sim.MemoryBusActive = True
-				
-				#Bus is currently busy, put task in outbound queue
-				else:
-					sim.OutQueue.append(sim.ActiveTask)
-
-
-				sim.DPUActive = False
-				sim.ActiveTask = None
-
-	
 	print(sim.TotalCycles)
-
-
 
 
 if __name__ == "__main__":
