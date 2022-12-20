@@ -321,11 +321,16 @@ def main():
 	sim.TaskSize = 2**TaskPower
 
 	print("Task Power :", TaskPower)
-
-	sim.JobList = [Job(2**27, 0, 70.0/8), Job(2**25, 0,
-                                           70.0/8), Job(2**26, 0, 70.0/8)]
+	scale = 3
+	sim.JobList = [Job(2**28, 0, (70.0/8)*scale), Job(2**28, 0, (70.0/8)*scale), Job(2**28, 0, (70.0/8)*scale)]
 	sim.OutQueue = []
 	sim.InQueue = []
+
+	for job in sim.JobList:
+		print("Job :", job.ID)
+		print("\tHost -> DPU Cycles : ", hostToDPUTransfer(sim.TaskSize))
+		print("\tDPU -> Host Cycles : ", DPUToHostTransfer(sim.TaskSize))
+		print("\tTask Time          : ", getInternalCycles(sim.TaskSize, job.CyclesPerByte))
 
 	sim.TaskArray = []
 	for i in range(int(MRAM_SIZE/sim.TaskSize)):
