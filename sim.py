@@ -1,4 +1,6 @@
-SIM_CYCLES = 1e6
+import sys
+
+SIM_CYCLES = 1e3
 
 
 #Numbers from: https://arxiv.org/pdf/2105.03814.pdf#cite.gomezluna2021repo
@@ -85,6 +87,8 @@ class SimState:
 	OutQueue: list = None
 	InQueue: list = None
 
+	Task_RR_Index = 0
+
 	def pruneJobs(self) -> None:
 		modified = True
 
@@ -92,7 +96,7 @@ class SimState:
 			modified = False
 			for job in self.JobList:
 				if job.WorkLoadCompleted >= job.WorkLoadSize:
-					print("---Job : ", job.ID, " finished at cycle : ", self.TotalCycles)
+					print("--- Job : ", job.ID, " finished at cycle : ", self.TotalCycles)
 					self.JobList.remove(job)
 					modified = True
 
@@ -112,7 +116,7 @@ class SimState:
 			self.MemoryBusTask.TransferCyclesRemaining -= SIM_CYCLES
 
 			if self.MemoryBusTask.TransferCyclesRemaining <= 0:
-				print("Done transfering...")
+				print("Done transfering", getTaskLabel(self.MemoryBusTask), "...")
 
 				if self.MemoryBusTask.IsToHost:
 					self.MemoryBusTask.ParentJob.WorkLoadCompleted += self.TaskSize
@@ -133,10 +137,8 @@ class SimState:
 			#Is there a spot available on the DPU?
 			FreeTask = getFreeTask(self.TaskArray)
 
-			#Is there a Job waiting in queue?
-			NextJob = selectJob(self.JobList)
-
-			if FreeTask != None and NextJob != None:
+			if FreeTask != None and self.InQueue:
+				NextJob = self.InQueue.pop(0)
 
 				#Associate Task with Job, and mark as transfering to DPU
 				FreeTask.ParentJob = NextJob
@@ -148,9 +150,6 @@ class SimState:
 				FreeTask.Valid = True
 
 				print("Starting transfer of job", getTaskLabel(FreeTask))
-
-				#Record that job has dispatched a task
-				NextJob.WorkLoadDispatched += self.TaskSize
 
 				#Let global state know memory bus is active
 				self.MemoryBusActive = True
@@ -177,7 +176,8 @@ class SimState:
 		if not self.DPUActive:
 
 			#Is there a task that needs to be run?
-			NextTask: Task = selectTask(self.TaskArray)
+			NextTask: Task = self.selectTask()
+			#NextTask: Task = self.selectTask_RR()
 
 			if NextTask != None:
 				print("Starting task ", NextTask.TaskID,
@@ -216,6 +216,58 @@ class SimState:
 				self.DPUActive = False
 				self.ActiveTask = None
 
+	def selectTask(self) -> Task:
+		global sim
+		for task in self.TaskArray:
+			if task.Valid and not task.Active and not task.Transfering and task.InternalCyclesRemaining > 0:
+				return task
+
+		return None
+
+	def selectTask_RR(self) -> Task:
+		task = self.TaskArray[self.Task_RR_Index]
+
+		self.Task_RR_Index = (self.Task_RR_Index + 1) % len(self.TaskArray)
+
+		if task.Valid and not task.Active and not task.Transfering and task.InternalCyclesRemaining > 0:
+			return task
+
+		else:
+			return None
+
+	#Fill input job queue in round robin order
+	def fillInQueue_RR(self) -> None:
+		self.InQueue = []
+
+		tmpList = self.JobList.copy()
+
+		while tmpList:
+			for job in tmpList:
+				if job.WorkLoadDispatched < job.WorkLoadSize:
+					self.InQueue.append(job)
+					job.WorkLoadDispatched += sim.TaskSize
+
+			modified = True
+			while modified:
+				modified = False
+				for job in tmpList:
+					if job.WorkLoadDispatched >= job.WorkLoadSize:
+						print("--- Job : ", job.ID, " fully queued")
+						tmpList.remove(job)
+						modified = True
+
+	#Fill input job queue in FCFS order
+	def fillInQueue_FCFS(self) -> None:
+		self.InQueue = []
+
+		tmpList = self.JobList.copy()
+
+		for job in tmpList:
+
+			while job.WorkLoadDispatched < job.WorkLoadSize:
+				self.InQueue.append(job)
+				job.WorkLoadDispatched += sim.TaskSize
+
 
 sim = SimState()
 
@@ -252,36 +304,35 @@ def getExternalCycles(PartitionSize):
 	return hostToDPUTransfer(PartitionSize) + DPUToHostTransfer(PartitionSize)
 
 
-def selectJob(JobList: list[Job]) -> Job:
-	global sim
-	for job in JobList:
-		if job.WorkLoadDispatched < job.WorkLoadSize:
-			return job
-
-	return None
-
-
-def selectTask(TaskList: list[Task]) -> Task:
-	global sim
-	for task in TaskList:
-		if task.Valid and not task.Active and not task.Transfering and task.InternalCyclesRemaining > 0:
-			return task
-
-	return None
+#def selectJob(JobList: list[Job]) -> Job:
+#	global sim
+#	for job in JobList:
+#		if job.WorkLoadDispatched < job.WorkLoadSize:
+#			return job
+#
+#	return None
 
 
 def main():
 	global sim
 
-	sim.TaskSize = 2**25
+	TaskPower = int(sys.argv[1])
 
-	sim.JobList = [Job(2**26, 0, 30.0/8), Job(2**26, 0, 20/8)]
+	sim.TaskSize = 2**TaskPower
+
+	print("Task Power :", TaskPower)
+
+	sim.JobList = [Job(2**27, 0, 70.0/8), Job(2**25, 0,
+                                           70.0/8), Job(2**26, 0, 70.0/8)]
 	sim.OutQueue = []
 	sim.InQueue = []
 
 	sim.TaskArray = []
 	for i in range(int(MRAM_SIZE/sim.TaskSize)):
 		sim.TaskArray.append(Task(i, 0, 0, 0))
+
+	#sim.fillInQueue_RR()
+	sim.fillInQueue_FCFS()
 
 	#Simulation loop
 	while sim.JobList:
@@ -293,7 +344,7 @@ def main():
 		#Simulate taks on DPU
 		sim.SimDPU()
 
-	print(sim.TotalCycles)
+	print("TotalCycles :", sim.TotalCycles)
 
 
 if __name__ == "__main__":
